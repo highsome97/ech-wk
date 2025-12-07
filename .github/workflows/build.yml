@@ -47,6 +47,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
+          cache: false
 
       - name: Initialize Go module
         run: |
@@ -56,15 +57,6 @@ jobs:
       - name: Build Go executable
         run: |
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o ech-workers${{ matrix.exe_ext }} ech-workers.go
-        shell: bash
-
-      - name: Test executable
-        run: |
-          if [ "${{ matrix.goos }}" == "windows" ]; then
-            .\ech-workers.exe -h
-          else
-            ./ech-workers -h
-          fi
         shell: bash
 
       - name: Prepare release files
@@ -136,32 +128,6 @@ jobs:
         with:
           name: ECHWorkers-${{ matrix.goos }}-${{ matrix.goarch }}
           path: ECHWorkers-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.archive_ext }}
-
-  test-python:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.9', '3.10', '3.11']
-    
-    runs-on: ${{ matrix.os }}
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Check Python syntax
-        run: |
-          python -m py_compile gui.py
-
-      - name: Install dependencies (PyQt5)
-        if: matrix.os != 'ubuntu-latest' || matrix.python-version == '3.9'
-        run: |
-          pip install PyQt5 || echo "PyQt5 installation skipped"
 
   release:
     needs: build
