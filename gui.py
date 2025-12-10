@@ -42,9 +42,15 @@ try:
                                   QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                                   QComboBox, QTextEdit, QCheckBox, QGroupBox, 
                                   QMessageBox, QInputDialog, QSystemTrayIcon, QMenu, QAction)
-    from PyQt5.QtCore import Qt, QThread, pyqtSignal
-    from PyQt5.QtGui import QIcon
+    from PyQt5.QtCore import Qt, QThread, pyqtSignal, qRegisterMetaType
+    from PyQt5.QtGui import QIcon, QTextCursor
     HAS_PYQT = True
+    
+    # 注册 QTextCursor 类型以避免信号槽错误
+    try:
+        qRegisterMetaType('QTextCursor')
+    except:
+        pass
     
     # 高 DPI 支持 - 必须在创建 QApplication 之前设置
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
@@ -57,11 +63,20 @@ except ImportError:
     print("安装命令: pip3 install PyQt5")
     sys.exit(1)
 
-APP_VERSION = "1.2"
-APP_TITLE = f"ECH WK 客户端 v{APP_VERSION}"
+APP_VERSION = "1.4"
+APP_TITLE = f"ECH Workers 客户端 v{APP_VERSION}"
 
 # 中国IP列表URL
 CHINA_IP_LIST_URL = "https://raw.githubusercontent.com/mayaxcn/china-ip-list/master/chn_ip.txt"
+
+def get_app_dir():
+    """获取程序所在目录（支持打包后的可执行文件）"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包后的可执行文件
+        return Path(sys.executable).parent.absolute()
+    else:
+        # 开发模式或直接运行 Python 脚本
+        return Path(__file__).parent.absolute()
 
 # 复用原有的 ConfigManager, ProcessManager, AutoStartManager
 # 从原文件导入这些类（简化版本）
@@ -176,11 +191,11 @@ class ProcessThread(QThread):
         """运行进程"""
         exe_path = self._find_executable()
         if not exe_path:
-            script_dir = Path(__file__).parent.absolute()
+            app_dir = get_app_dir()
             self.log_output.emit("错误: 找不到 ech-workers 可执行文件!\n")
             self.log_output.emit(f"请确保 ech-workers 可执行文件在以下位置之一:\n")
-            self.log_output.emit(f"  - {script_dir}/ech-workers\n")
-            self.log_output.emit(f"  - {script_dir}/ech-workers.exe\n")
+            self.log_output.emit(f"  - {app_dir}/ech-workers\n")
+            self.log_output.emit(f"  - {app_dir}/ech-workers.exe\n")
             self.log_output.emit(f"  - {Path.cwd()}/ech-workers\n")
             self.log_output.emit(f"  - 或者在系统 PATH 中\n")
             self.log_output.emit(f"\n注意: ech-workers 必须是编译后的可执行文件，不是源文件。\n")
@@ -254,8 +269,8 @@ class ProcessThread(QThread):
     
     def _find_executable(self):
         """查找可执行文件（跨平台）"""
-        # 脚本所在目录
-        script_dir = Path(__file__).parent.absolute()
+        # 程序所在目录（支持双击运行）
+        app_dir = get_app_dir()
         # 当前工作目录
         current_dir = Path.cwd()
         
@@ -264,13 +279,13 @@ class ProcessThread(QThread):
         
         # 可能的可执行文件路径（按优先级）
         possible_paths = [
-            script_dir / f'ech-workers{exe_ext}',
+            app_dir / f'ech-workers{exe_ext}',
             current_dir / f'ech-workers{exe_ext}',
             # Windows 特定路径
-            script_dir / 'ech-workers.exe' if sys.platform == 'win32' else None,
+            app_dir / 'ech-workers.exe' if sys.platform == 'win32' else None,
             current_dir / 'ech-workers.exe' if sys.platform == 'win32' else None,
             # Unix 路径（无扩展名）
-            script_dir / 'ech-workers' if sys.platform != 'win32' else None,
+            app_dir / 'ech-workers' if sys.platform != 'win32' else None,
             current_dir / 'ech-workers' if sys.platform != 'win32' else None,
         ]
         
@@ -342,8 +357,8 @@ class MainWindow(QMainWindow):
         self.load_server_config()
         self.init_tray_icon()  # 初始化系统托盘
         
-        # 异步加载中国IP列表
-        self.load_china_ip_list_async()
+        # 异步加载中国IP列表（静默模式：失败时不显示错误）
+        self.load_china_ip_list_async(silent=True)
         
         if self.is_autostart:
             self.hide()
@@ -526,36 +541,38 @@ class MainWindow(QMainWindow):
         
         QApplication.quit()
     
-    def load_china_ip_list_async(self):
-        """异步加载中国IP列表"""
+    def load_china_ip_list_async(self, silent=False):
+        """异步加载中国IP列表（静默模式：失败时不显示错误）"""
         def load_in_thread():
             try:
-                self.append_log("[系统] 正在加载中国IP列表...\n")
+                if not silent:
+                    self.append_log("[系统] 正在加载中国IP列表...\n")
                 ranges = self._load_china_ip_list()
                 if ranges:
                     self.china_ip_ranges = ranges
-                    self.append_log(f"[系统] 已加载中国IP列表，共 {len(ranges)} 个IP段\n")
-                else:
-                    self.append_log("[系统] 加载中国IP列表失败，使用默认列表\n")
+                    if not silent:
+                        self.append_log(f"[系统] 已加载中国IP列表，共 {len(ranges)} 个IP段\n")
+                # 失败时不显示错误（静默模式）
             except Exception as e:
-                self.append_log(f"[系统] 加载中国IP列表出错: {e}\n")
+                # 静默模式：不显示错误
+                if not silent:
+                    self.append_log(f"[系统] 加载中国IP列表出错: {e}\n")
         
         thread = threading.Thread(target=load_in_thread, daemon=True)
         thread.start()
     
     def _load_china_ip_list(self):
-        """下载并解析中国IP列表"""
+        """下载并解析中国IP列表（缓存永久有效）"""
         try:
-            # 尝试从缓存读取
+            # 尝试从缓存读取（永久有效，不检查过期时间）
             cache_file = self.config_manager.config_dir / "china_ip_list.json"
             if cache_file.exists():
                 try:
                     with open(cache_file, 'r', encoding='utf-8') as f:
                         cached_data = json.load(f)
-                        # 检查缓存是否过期（24小时）
-                        import time
-                        if time.time() - cached_data.get('timestamp', 0) < 86400:
-                            return cached_data.get('ranges', [])
+                        ranges = cached_data.get('ranges', [])
+                        if ranges:
+                            return ranges
                 except:
                     pass
             
@@ -581,7 +598,7 @@ class MainWindow(QMainWindow):
                     except:
                         continue
             
-            # 保存到缓存
+            # 保存到缓存（永久有效）
             try:
                 import time
                 with open(cache_file, 'w', encoding='utf-8') as f:
@@ -594,7 +611,7 @@ class MainWindow(QMainWindow):
             
             return ranges
         except Exception as e:
-            print(f"加载中国IP列表失败: {e}")
+            # 静默失败，不打印错误
             return None
     
     def _convert_ip_ranges_to_wildcards(self, ranges):
@@ -899,6 +916,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "请输入监听地址")
             return
         
+        # 如果中国IP列表未加载，尝试自动下载
+        if self.china_ip_ranges is None:
+            self.append_log("[系统] 正在后台下载中国IP列表...\n")
+            self.load_china_ip_list_async(silent=True)
+        
         self.config_manager.update_server(server)
         self.config_manager.save_config()
         
@@ -914,6 +936,15 @@ class MainWindow(QMainWindow):
         self.listen_edit.setEnabled(False)
         self.server_combo.setEnabled(False)
         self.append_log(f"[系统] 已启动服务器: {server['name']}\n")
+        
+        # 延迟检查IP列表是否已加载（给下载一些时间）
+        def check_ip_list_loaded():
+            import time
+            time.sleep(2)  # 等待2秒
+            if self.china_ip_ranges:
+                self.append_log(f"[系统] 中国IP列表已加载，共 {len(self.china_ip_ranges)} 个IP段\n")
+        
+        threading.Thread(target=check_ip_list_loaded, daemon=True).start()
     
     def stop_process(self):
         """停止进程"""
@@ -958,11 +989,16 @@ class MainWindow(QMainWindow):
                 app_name = "ECHWorkersClient"
                 
                 if enabled:
-                    # 获取当前脚本路径
-                    script_path = Path(__file__).absolute()
-                    python_path = sys.executable
-                    # 创建启动命令
-                    cmd = f'"{python_path}" "{script_path}"'
+                    # 获取程序路径（支持打包后的可执行文件）
+                    app_path = get_app_dir() / "gui.py"
+                    if not app_path.exists() and getattr(sys, 'frozen', False):
+                        # 如果是打包后的可执行文件，直接使用可执行文件路径
+                        app_path = Path(sys.executable)
+                        cmd = f'"{app_path}"'
+                    else:
+                        # 开发模式：使用 Python 运行脚本
+                        python_path = sys.executable
+                        cmd = f'"{python_path}" "{app_path}"'
                     
                     try:
                         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
@@ -990,9 +1026,32 @@ class MainWindow(QMainWindow):
                     # macOS
                     plist_path = Path.home() / "Library" / "LaunchAgents" / "com.echworkers.client.plist"
                     if enabled:
-                        script_path = Path(__file__).absolute()
-                        python_path = sys.executable
-                        plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+                        # 获取程序路径（支持打包后的可执行文件）
+                        app_path = get_app_dir() / "gui.py"
+                        if not app_path.exists() and getattr(sys, 'frozen', False):
+                            # 如果是打包后的可执行文件，直接使用可执行文件路径
+                            app_path = Path(sys.executable)
+                            plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.echworkers.client</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{app_path}</string>
+        <string>-autostart</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>"""
+                        else:
+                            # 开发模式：使用 Python 运行脚本
+                            python_path = sys.executable
+                            plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -1001,7 +1060,7 @@ class MainWindow(QMainWindow):
     <key>ProgramArguments</key>
     <array>
         <string>{python_path}</string>
-        <string>{script_path}</string>
+        <string>{app_path}</string>
         <string>-autostart</string>
     </array>
     <key>RunAtLoad</key>
@@ -1062,13 +1121,27 @@ class MainWindow(QMainWindow):
     def append_log(self, text):
         """追加日志"""
         self.log_text.append(text)
-        # 限制日志长度
+        # 限制日志长度（使用更安全的方式，避免 QTextCursor 信号问题）
         if self.log_text.document().blockCount() > 1000:
-            cursor = self.log_text.textCursor()
-            cursor.movePosition(cursor.Start)
-            cursor.movePosition(cursor.Down, cursor.MoveAnchor, 100)
-            cursor.movePosition(cursor.Start, cursor.KeepAnchor)
-            cursor.removeSelectedText()
+            try:
+                # 获取文档内容
+                doc = self.log_text.document()
+                # 删除前100行
+                cursor = QTextCursor(doc)
+                cursor.movePosition(QTextCursor.Start)
+                for _ in range(100):
+                    cursor.movePosition(QTextCursor.Down, QTextCursor.MoveAnchor)
+                cursor.movePosition(QTextCursor.Start, QTextCursor.KeepAnchor)
+                cursor.removeSelectedText()
+            except:
+                # 如果出错，直接清空并保留最后900行
+                try:
+                    content = self.log_text.toPlainText()
+                    lines = content.split('\n')
+                    if len(lines) > 900:
+                        self.log_text.setPlainText('\n'.join(lines[-900:]))
+                except:
+                    pass
     
     def update_auto_start_checkbox(self):
         """更新开机启动复选框状态"""
