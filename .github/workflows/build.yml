@@ -155,16 +155,16 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') && matrix.enable_gui == true
         run: |
           if [ "${{ matrix.goos }}" == "windows" ]; then
-            pyinstaller --onefile --windowed --name ECHWorkersGUI gui.py
+            pyinstaller --onefile --windowed --name ECHWorkersGUI --hidden-import=PyQt5 gui.py
           elif [ "${{ matrix.goos }}" == "linux" ]; then
             if python -c "import PyQt5.QtWidgets" 2>/dev/null; then
-              pyinstaller --onefile --name ECHWorkersGUI gui.py
+              pyinstaller --onefile --name ECHWorkersGUI --hidden-import=PyQt5 gui.py
             else
               echo "PyQt5 not available, skipping GUI build for Linux"
               echo "Only Go executable will be included"
             fi
           else
-            pyinstaller --onefile --name ECHWorkersGUI gui.py
+            pyinstaller --onefile --name ECHWorkersGUI --hidden-import=PyQt5 gui.py
           fi
         shell: bash
 
